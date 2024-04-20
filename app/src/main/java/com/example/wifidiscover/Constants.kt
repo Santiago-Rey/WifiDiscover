@@ -11,6 +11,10 @@ object Constants {
 
     const val TAG = "WiFiDirect" // Etiqueta para registros de depuración
 
+    const val PREFERENCES_UUID = "UUID"
+    const val PREFERENCES_KEY = "PREFERENCES"
+    const val MESSAGE = "MESSAGE"
+
 
 
 }
