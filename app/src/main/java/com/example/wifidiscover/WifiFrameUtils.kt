@@ -19,6 +19,7 @@ class WifiFrameUtils {
 
 
             message["o"] = wifiFrame.sendMessage
+            message["d"] = wifiFrame.dateSend
 
             return message
         }
@@ -26,11 +27,13 @@ class WifiFrameUtils {
         fun hashMapToWiFiFrame(message: MutableMap<String, String>): WifiFrame {
             return WifiFrame().apply {
                 sendMessage = message["o"]?: "Dispositivo x"
+                dateSend = message["d"]?: "0L"
+                dateReceived =  getFormattedDateTime()
 
             }
         }
 
-        fun buildMyWiFiFrame(context: Context, deviceMAC: WifiP2pDevice): WifiFrame {
+        fun buildMyWiFiFrame(context: Context): WifiFrame {
             val sharedPreferences = context.getSharedPreferences(
                 Constants.PREFERENCES_KEY,
                 AppCompatActivity.MODE_PRIVATE
@@ -38,6 +41,7 @@ class WifiFrameUtils {
 
             return WifiFrame().apply {
                 sendMessage = sharedPreferences.getString(Constants.MESSAGE, "mensaje").toString()
+                dateSend = getFormattedDateTime()
 
             }
         }

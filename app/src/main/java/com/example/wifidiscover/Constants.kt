@@ -10,6 +10,4 @@ object Constants {
     const val PREFERENCES_KEY = "PREFERENCES"
     const val MESSAGE = "MESSAGE"
 
-
-
 }
