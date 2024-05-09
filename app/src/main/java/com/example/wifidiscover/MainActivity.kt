@@ -10,6 +10,7 @@ import android.net.wifi.p2p.nsd.WifiP2pDnsSdServiceInfo
 import android.net.wifi.p2p.nsd.WifiP2pDnsSdServiceRequest
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
 import android.util.Log
 import android.widget.ArrayAdapter
 import android.widget.Toast
@@ -18,9 +19,8 @@ import androidx.core.app.ActivityCompat
 import com.example.wifidiscover.Constants.TAG
 import com.example.wifidiscover.Constants.TAG_WIFI
 import com.example.wifidiscover.databinding.ActivityMainBinding
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 
 class MainActivity : AppCompatActivity() {
@@ -34,49 +34,17 @@ class MainActivity : AppCompatActivity() {
     private lateinit var mChannel: WifiP2pManager.Channel
 
     private var peers: MutableList<WifiP2pDevice> = mutableListOf()
-    private var deviceNameArray: MutableList<String> = mutableListOf()
-    private var deviceArray: MutableList<WifiP2pDevice> = mutableListOf()
+    private var deviceArray: MutableList<MessageModel> = mutableListOf()
 
 
     private val connectedDevices: MutableList<WifiP2pDevice> = mutableListOf()
     private var info : WifiFrame = WifiFrame()
+    private var selectedDevice: WifiP2pDevice? = null
+
+
 
     var text: CharSequence = "Activa el wifi"
     var duration = Toast.LENGTH_SHORT
-
-
-    val peerListListener = WifiP2pManager.PeerListListener { peerList ->
-        if (!peerList.deviceList.equals(peers)) {
-
-            peers.clear()
-            peers.addAll(peerList.deviceList)
-            deviceNameArray.clear()
-            deviceArray.clear()
-            for (device in peerList.deviceList) {
-
-                deviceNameArray.add(device.deviceName)
-                deviceArray.add(device)
-            }
-
-            val adapter = ArrayAdapter(
-                this,
-                android.R.layout.simple_list_item_1,
-                deviceNameArray
-            )
-            binding.peerListView.adapter = adapter
-        }
-        // Actualiza la lista de dispositivos conectados
-        connectedDevices.clear()
-        connectedDevices.addAll(peerList.deviceList)
-
-        if (peers.size == 0) {
-            Toast.makeText(this, "No Device Found", Toast.LENGTH_SHORT).show()
-            return@PeerListListener
-        }
-
-        discoverPeers()
-    }
-
 
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -88,11 +56,69 @@ class MainActivity : AppCompatActivity() {
 
         sharedPreferences = getSharedPreferences(Constants.PREFERENCES_KEY, MODE_PRIVATE)
 
+        init()
+        addServiceRequest()
+        //startTimer()
+        startDiscover()
 
         exqListener()
+        binding.peerListView.setOnItemClickListener{parent,viiew,pos,id ->
+            selectedDevice = deviceArray[pos].device
+            startTimer()
+
+           // updateDescription(pos)
+
+        }
 
 
     }
+
+    private val executor = Executors.newSingleThreadScheduledExecutor()
+    private var task: Runnable? = null
+    private var interval: Long = 10000
+    private val devicesWithReceivedMessages: MutableSet<String> = mutableSetOf()
+    fun startDiscover() {
+        // Crea un nuevo Runnable que se ejecutará después de cada intervalo
+        task = Runnable {
+            // Llama al método que deseas ejecutar
+
+            discoverServices()
+            clearReceivedDevicesAfterDelay()
+
+        }
+        // Programa el primer ciclo del temporizador con un retraso inicial de 0 y un intervalo especificado
+        executor.scheduleAtFixedRate(task!!, 0, interval, TimeUnit.MILLISECONDS)
+    }
+    private fun startTimer() {
+        executor.scheduleAtFixedRate({
+
+            selectedDevice?.let { device ->
+                // Buscar el índice del dispositivo seleccionado en la lista
+                val index = deviceArray.indexOfFirst { it.device.deviceName == device.deviceName }
+                if (index != -1) {
+                    // Llamar a updateDescription con el índice del dispositivo seleccionado
+                    if (!devicesWithReceivedMessages.contains(device.deviceName)) {
+                        // Si es la primera vez que recibes un mensaje del dispositivo, procésalo
+                        runOnUiThread {
+                            // Actualiza la descripción o realiza las operaciones necesarias con el dispositivo
+                            updateDescription(index)
+                        }
+                        // Marca el dispositivo como uno del que ya has recibido un mensaje
+                        devicesWithReceivedMessages.add(device.deviceName)
+                    }
+                }
+            }
+        }, 0, interval, TimeUnit.MILLISECONDS)
+    }
+
+    private fun clearReceivedDevicesAfterDelay() {
+        // Limpia el conjunto de dispositivos después de cierto tiempo (por ejemplo, 30 segundos)
+        executor.schedule({
+            devicesWithReceivedMessages.clear()
+        }, 500, TimeUnit.MILLISECONDS)
+    }
+
+
 
 
 
@@ -108,6 +134,10 @@ class MainActivity : AppCompatActivity() {
                     Toast.LENGTH_LONG
                 ).show()
                 saveMessage(message)
+
+                clearLocalServices{
+                    startRegistration()
+                }
 
             }else{
                 Toast.makeText(
@@ -127,24 +157,29 @@ class MainActivity : AppCompatActivity() {
             toast.show()
         }*/
 
+
         binding.discover.setOnClickListener {
 
+            //init()
+            //addServiceRequest()
+            //startRegistration()
+            clearServiceRequests {
+                addServiceRequest()
+            }
 
-            init()
-            startRegistration()
-            addServiceRequest()
-            discoverService()
        }
+
+        binding.refresh.setOnClickListener{
+            discoverServices()
+        }
 
     }
 
     fun init(){
 
-        info = WifiFrameUtils.buildMyWiFiFrame( this, WifiP2pDevice())
-
         wifiManager = this.applicationContext.getSystemService(WIFI_SERVICE) as WifiManager
         mManager = getSystemService(WIFI_P2P_SERVICE) as WifiP2pManager
-        mChannel = mManager.initialize(applicationContext, mainLooper, null)
+        mChannel = mManager.initialize(this, mainLooper, null)
 
 
 
@@ -155,6 +190,46 @@ class MainActivity : AppCompatActivity() {
        // binding.peerListView.setAdapter(expandableListAdapter)
         Log.e(TAG, "MAC Address : $macAddress")
 
+        /*binding.peerListView.setOnItemClickListener{_,_,pos,_ ->
+
+            updateDescription(pos)
+
+        }*/
+
+    }
+
+    private fun addDeviceList(record: WifiP2pDevice, wifiFrame: WifiFrame) {
+
+        val deviceSame = deviceArray.firstOrNull{it.device.deviceName == record.deviceName}
+
+        if( deviceSame != null){
+            val messageExist = deviceSame.message.any {
+                it.dateSend == wifiFrame.dateSend
+            }
+
+            if(!messageExist)
+                 deviceSame.message.add(wifiFrame)
+
+        }else{
+            var message = MessageModel(record, mutableListOf(wifiFrame) )
+
+            deviceArray.add(message)
+        }
+
+
+        val adapter = ArrayAdapter(
+            this,
+            android.R.layout.simple_list_item_1,
+            deviceArray
+
+        )
+        binding.peerListView.adapter = adapter
+       // adapter.notifyDataSetChanged()
+
+
+            //discoverPeers()
+
+
     }
 
 
@@ -164,35 +239,36 @@ class MainActivity : AppCompatActivity() {
         editor.apply()
     }
 
-    private fun updateDescription(wifiP2pDevice: WifiP2pDevice){
 
-        val deviceInfo = "Nombre: ${wifiP2pDevice.deviceName}"
+    private fun updateDescription(selectedDevice: Int){
+
+        val selectedDeviceInfo = deviceArray[selectedDevice]
+        binding.messageTextView.text = selectedDeviceInfo.getAllMessage()
+       /* val deviceInfo = "Nombre: ${wifiP2pDevice.deviceName}"
         val deviceMAC = "MAC: ${wifiP2pDevice.deviceAddress}"
         val message =  "Mensaje:"
         //val messageSend = "Mensaje: "
-        val formattedDateTime = getFormattedDateTime() // Obtener la hora y la fecha actualizada
+        val formattedDateTime = getFormattedDateTime() // Obtener la hora y la fecha actualizada*/
 
         // Actualizar el TextView con la información del dispositivo y la hora/fecha actualizada
-         binding.messageTextView.text = "$deviceInfo\n$message Prueba de mensaje\n$deviceMAC\n$formattedDateTime"
+        // binding.messageTextView.text = "$deviceNameArray"
 
 
     }
 
-    private fun getFormattedDateTime(): String {
-        val currentTime = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
-        val currentDate = SimpleDateFormat("dd/MM/yyyy", Locale.getDefault()).format(Date())
-        return "Hora del ultimo mensaje: $currentTime\nFecha : $currentDate"
-    }
+
 
     //Agregando servicio local
     private fun startRegistration() {
+
+        info = WifiFrameUtils.buildMyWiFiFrame( this)
         //Guardar el nombre del dispositvo y la MAC
         val record =  WifiFrameUtils.wifiFrameToHashMap(info)
 
 
         // Service information.  Pass it an instance name, service type
         val serviceInfo =
-            WifiP2pDnsSdServiceInfo.newInstance("_test", "_presence._tcp", record)
+            WifiP2pDnsSdServiceInfo.newInstance("_networkChat", "_chatApp._tcp", record)
 
         if (ActivityCompat.checkSelfPermission(
                 this,
@@ -211,7 +287,7 @@ class MainActivity : AppCompatActivity() {
             override fun onSuccess() {
                 // Command successful! Code isn't necessarily needed here,
                 // Unless you want to update the UI or add logging statements.
-                discoverPeers()
+                //discoverPeers()
             }
 
             override fun onFailure(arg0: Int) {
@@ -223,8 +299,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun addServiceRequest() {
         val serviceRequest = WifiP2pDnsSdServiceRequest.newInstance(
-            "_test",
-            "_presence._tcp"
+            "_networkChat",
+            "_chatApp._tcp"
         )
 
         mManager.addServiceRequest(
@@ -232,7 +308,8 @@ class MainActivity : AppCompatActivity() {
             serviceRequest,
             object : WifiP2pManager.ActionListener {
                 override fun onSuccess() {
-                    discoverServices()
+                    discoverListener()
+
                 }
 
                 override fun onFailure(code: Int) {
@@ -246,19 +323,29 @@ class MainActivity : AppCompatActivity() {
 
 
     //onreceivelocation en BP
-    private fun discoverService() {
+    private fun discoverListener() {
 
-        val txtListener = WifiP2pManager.DnsSdTxtRecordListener { _, record, _ ->
+        val txtListener = WifiP2pManager.DnsSdTxtRecordListener { fullDomain, record, srcDevice ->
             Log.d(TAG, "DnsSdTxtRecord available -$record")
 
-            if (record.isEmpty()) return@DnsSdTxtRecordListener
+            if (record.isEmpty() || srcDevice.deviceName == "") return@DnsSdTxtRecordListener
 
             val wifiFrame = WifiFrameUtils.hashMapToWiFiFrame(record)
-            Toast.makeText(this, "Servicio encontrado : mensaje ${wifiFrame.sendMessage}" , Toast.LENGTH_SHORT ).show()
+            addDeviceList(srcDevice, wifiFrame)
+
+
+            //Toast.makeText(this, "Servicio encontrado : mensaje ${wifiFrame.sendMessage}" , Toast.LENGTH_SHORT ).show()
         }
 
+        val servListener =
+            WifiP2pManager.DnsSdServiceResponseListener { instanceName, registrationType, resourceType ->
+                Log.d("chat", "BonjourService available! instanceName: $instanceName")
+                Log.d("chat", "BonjourService available! registrationType: $registrationType")
+                Log.d("chat", "BonjourService available! resourceType: $resourceType")
+            }
 
-        mManager.setDnsSdResponseListeners(mChannel, null, txtListener)
+
+        mManager.setDnsSdResponseListeners(mChannel, servListener, txtListener)
     }
 
     private fun discoverPeers() {
@@ -293,7 +380,7 @@ class MainActivity : AppCompatActivity() {
                         return
                     }
 
-                    //mManager.requestPeers(mChannel, this@MainActivity)
+                //    mManager.requestPeers(mChannel, this@MainActivity)
                 }
 
                 override fun onFailure(error: Int) {
@@ -331,5 +418,37 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         )
+    }
+
+    private fun clearServiceRequests(onSuccessCallback: () -> Unit) {
+        mManager?.clearServiceRequests(mChannel,
+            object : WifiP2pManager.ActionListener {
+                override fun onSuccess() {
+                    Log.d("success", "clearServiceRequests result: Success")
+                    Toast.makeText(this@MainActivity, "Success clear request", Toast.LENGTH_SHORT ).show()
+                    onSuccessCallback.invoke()
+                }
+
+                override fun onFailure(code: Int) {
+                    Log.e("failed", "clearServiceRequests result: Failure with code $code")
+                    Toast.makeText(this@MainActivity, "Failed to clear service requests: $code", Toast.LENGTH_SHORT ).show()
+                }
+            })
+    }
+
+    private fun clearLocalServices(onSuccessCallback: () -> Unit) {
+        mManager?.clearLocalServices(mChannel,
+            object : WifiP2pManager.ActionListener {
+                override fun onSuccess() {
+                    Log.d("success", "clearLocalServices result: Success")
+                    Toast.makeText(this@MainActivity, "Success clear local services", Toast.LENGTH_SHORT ).show()
+                    onSuccessCallback.invoke()
+                }
+
+                override fun onFailure(code: Int) {
+                    Log.e("Failed", "clearLocalServices result:  Failure with code $code")
+                    Toast.makeText(this@MainActivity, "Failed to clear local services: $code", Toast.LENGTH_SHORT ).show()
+                }
+            })
     }
 }
