@@ -9,5 +9,7 @@ object Constants {
 
     const val PREFERENCES_KEY = "PREFERENCES"
     const val MESSAGE = "MESSAGE"
+    const val UUID = "UUID"
+    const val MESSAGE_LIST = "MESSAGE_LIST"
 
 }
