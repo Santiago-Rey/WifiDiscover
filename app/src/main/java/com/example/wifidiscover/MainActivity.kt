@@ -1,6 +1,7 @@
 package com.example.wifidiscover
 
 import android.Manifest
+import android.content.Context
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.net.wifi.WifiManager
@@ -15,9 +16,12 @@ import android.widget.ArrayAdapter
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
+import androidx.recyclerview.widget.LinearLayoutManager
 import com.example.wifidiscover.Constants.TAG
 import com.example.wifidiscover.Constants.TAG_WIFI
 import com.example.wifidiscover.databinding.ActivityMainBinding
+import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
@@ -32,13 +36,16 @@ class MainActivity : AppCompatActivity() {
     private lateinit var mManager: WifiP2pManager
     private lateinit var mChannel: WifiP2pManager.Channel
 
-    private var peers: MutableList<WifiP2pDevice> = mutableListOf()
+
     private var deviceArray: MutableList<MessageModel> = mutableListOf()
 
 
     private val connectedDevices: MutableList<WifiP2pDevice> = mutableListOf()
     private var info: WifiFrame = WifiFrame()
     private var selectedDevice: WifiP2pDevice? = null
+
+    private var messages: MutableList<String> = mutableListOf()
+    private lateinit var messageAdapter: MessageAdapter
 
 
     var text: CharSequence = "Activa el wifi"
@@ -59,6 +66,9 @@ class MainActivity : AppCompatActivity() {
         //startTimer()
         startDiscover()
 
+        messageAdapter = MessageAdapter(messages)
+
+        binding.messageRecyclerView.adapter = messageAdapter
         exqListener()
         binding.peerListView.setOnItemClickListener { parent, viiew, pos, id ->
             selectedDevice = deviceArray[pos].device
@@ -126,11 +136,15 @@ class MainActivity : AppCompatActivity() {
             if (message.isNotBlank()) {
                 Toast.makeText(
                     applicationContext,
-                    "Mensaje guardado",
+                    "Mensaje enviado",
                     Toast.LENGTH_LONG
                 ).show()
-                saveMessage(message)
 
+                messages.add(message.trim() + " - Hora de envío: " + getFormattedDateTime())
+                saveMessage(message)
+                messageAdapter.notifyDataSetChanged()
+                binding.messageRecyclerView.smoothScrollToPosition(messages.size - 1)
+                binding.messageEditText.text.clear()
                 clearLocalServices {
                     startRegistration()
                 }
@@ -138,7 +152,7 @@ class MainActivity : AppCompatActivity() {
             } else {
                 Toast.makeText(
                     applicationContext,
-                    "Guarda un mensaje",
+                    "Envía un mensaje",
                     Toast.LENGTH_LONG
                 ).show()
             }
@@ -151,7 +165,7 @@ class MainActivity : AppCompatActivity() {
               //Wifi activation
               val toast: Toast = Toast.makeText(applicationContext, text, duration)
               toast.show()
-          }*/
+          }
 
 
         binding.discover.setOnClickListener {
@@ -164,7 +178,7 @@ class MainActivity : AppCompatActivity() {
 
         binding.refresh.setOnClickListener {
             discoverServices()
-        }
+        }*/
 
     }
 
@@ -251,10 +265,12 @@ class MainActivity : AppCompatActivity() {
 
     private fun saveMessage(message: String) {
         val editor = sharedPreferences.edit()
+        val gson = Gson()
         editor.putString(Constants.MESSAGE, message.trim())
+        // Guardar la lista actualizada en SharedPreferences
+        editor.putString(Constants.MESSAGE_LIST, gson.toJson(messages))
         editor.apply()
     }
-
 
     private fun updateDescription(selectedDevice: Int) {
 
